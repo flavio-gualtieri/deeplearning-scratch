@@ -13,11 +13,6 @@ from deepscratch.data.base import DataModule
 
 @dataclass
 class TabularCSVConfig:
-    """
-    Configuration for a CSV tabular dataset.
-
-    This is close to what your drag-and-drop UI would eventually generate.
-    """
 
     path: str
     feature_columns: list[str]

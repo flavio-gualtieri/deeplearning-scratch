@@ -25,7 +25,7 @@ class ClassificationHead(Head):
         self,
         input_dim: int,
         num_classes: int,
-        hidden_dim: Optional[int] = None,
+        hidden_dims: list[int] = None,
         dropout: float = 0.0,
     ):
         super().__init__(
@@ -38,15 +38,16 @@ class ClassificationHead(Head):
 
         self.num_classes = num_classes
 
-        if hidden_dim is None:
+        if hidden_dims is None:
             self.net = nn.Linear(input_dim, num_classes)
         else:
-            self.net = nn.Sequential(
-                nn.Linear(input_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
-                nn.Linear(hidden_dim, num_classes),
-            )
+            layers = []
+            prev = input_dim
+            for h in hidden_dims:
+                layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
+                prev = h
+            layers.append(nn.Linear(prev, num_classes))
+            self.net = nn.Sequential(*layers)
 
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
         return self.net(embeddings)

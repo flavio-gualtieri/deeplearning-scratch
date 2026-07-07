@@ -2,6 +2,7 @@
 
 from typing import Any, Optional
 
+import yaml
 import torch
 import torch.nn as nn
 

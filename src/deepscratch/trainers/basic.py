@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from deepscratch.trainers.base import Trainer
+from .base import Trainer
+from ..runs.context import RunContext
+from ..runs.artifacts import save_final_model, save_model_summary
 
 
 @dataclass
@@ -36,12 +38,16 @@ class BasicTorchTrainer(Trainer):
 
     def __init__(
         self,
-        epochs: int = 10,
+        epochs: int = 500,
         learning_rate: float = 1e-3,
         loss_fn: Optional[nn.Module] = None,
+        run_context: RunContext = RunContext,
         optimizer_cls: type[torch.optim.Optimizer] = torch.optim.Adam,
         device: Optional[str] = None,
     ):
+        super().__init__(
+            run_context=run_context
+        )
         if epochs <= 0:
             raise ValueError("epochs must be positive.")
 
@@ -64,6 +70,7 @@ class BasicTorchTrainer(Trainer):
         model.to(self.device)
 
         loss_fn = self.loss_fn or self._default_loss_fn(model)
+
         optimizer = self.optimizer_cls(
             model.parameters(),
             lr=self.learning_rate,
@@ -73,37 +80,113 @@ class BasicTorchTrainer(Trainer):
             train_losses=[],
             val_losses=[],
         )
+        metrics_every = self.run_context.config.components.trainer.metrics_every
+        last_metrics: dict[str, float] = {}
 
-        for epoch in range(self.epochs):
-            train_loss = self._train_one_epoch(
+        try:
+            self.logger.log_event("training_started")
+
+            for epoch in range(1, self.epochs + 1):
+                train_loss = self._train_one_epoch(
+                    model=model,
+                    train_loader=train_loader,
+                    loss_fn=loss_fn,
+                    optimizer=optimizer,
+                )
+
+                history.train_losses.append(train_loss)
+
+                should_compute_metrics = epoch % metrics_every == 0
+
+                if should_compute_metrics:
+                    last_metrics = {
+                        "train_loss": train_loss,
+                    }
+
+                    if val_loader is not None:
+                        val_loss = self._evaluate_loss(
+                            model=model,
+                            data_loader=val_loader,
+                            loss_fn=loss_fn,
+                        )
+
+                        history.val_losses.append(val_loss)
+                        last_metrics["val_loss"] = val_loss
+
+                    self.logger.log_metrics(
+                        step=epoch,
+                        split="train",
+                        metrics={"train_loss": train_loss},
+                    )
+
+                    if "val_loss" in last_metrics:
+                        self.logger.log_metrics(
+                            step=epoch,
+                            split="val",
+                            metrics={"val_loss": last_metrics["val_loss"]},
+                        )
+
+                    saved_paths = self.checkpointer.maybe_save(
+                        epoch=epoch,
+                        model=model,
+                        optimizer=optimizer,
+                        metrics=last_metrics,
+                    )
+
+                    for path in saved_paths:
+                        self.logger.log_event(
+                            "checkpoint_saved",
+                            {"path": str(path), "epoch": epoch},
+                        )
+
+                if "val_loss" in last_metrics:
+                    print(
+                        f"Epoch {epoch}/{self.epochs} "
+                        f"- train_loss: {train_loss:.4f} "
+                        f"- val_loss: {last_metrics['val_loss']:.4f}"
+                    )
+                else:
+                    print(
+                        f"Epoch {epoch}/{self.epochs} "
+                        f"- train_loss: {train_loss:.4f}"
+                    )
+
+            final_model_path = save_final_model(
+                run_context=self.run_context,
                 model=model,
-                train_loader=train_loader,
-                loss_fn=loss_fn,
+                epoch=self.epochs,
+                metrics=last_metrics,
                 optimizer=optimizer,
+                history=history,
             )
 
-            history.train_losses.append(train_loss)
+            model_summary_path = save_model_summary(
+                run_context=self.run_context,
+                model=model,
+            )
 
-            if val_loader is not None:
-                val_loss = self._evaluate_loss(
-                    model=model,
-                    data_loader=val_loader,
-                    loss_fn=loss_fn,
-                )
-                history.val_losses.append(val_loss)
+            self.logger.log_event(
+                "final_model_saved",
+                {
+                    "path": str(final_model_path),
+                    "epoch": self.epochs,
+                },
+            )
 
-                print(
-                    f"Epoch {epoch + 1}/{self.epochs} "
-                    f"- train_loss: {train_loss:.4f} "
-                    f"- val_loss: {val_loss:.4f}"
-                )
-            else:
-                print(
-                    f"Epoch {epoch + 1}/{self.epochs} "
-                    f"- train_loss: {train_loss:.4f}"
-                )
+            self.logger.log_event(
+                "model_summary_saved",
+                {
+                    "path": str(model_summary_path),
+                },
+            )
 
-        return history
+            self.logger.log_event("training_completed")
+
+            return history
+
+        except Exception as error:
+            self.logger.log_error(error)
+            raise
 
     def evaluate(
         self,
