@@ -6,14 +6,16 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
 
-from deepscratch.data.base import DataModule
+from torch.utils.data import DataLoader, Dataset, Subset
+from dataclasses import dataclass, field
+
+from .base import DataModule
+from ..runs.artifacts import save_json
 
 
 @dataclass
 class TabularCSVConfig:
-
     path: str
     feature_columns: list[str]
     target_column: str
@@ -21,8 +23,7 @@ class TabularCSVConfig:
     task_type: str = "classification"
 
     batch_size: int = 32
-    val_fraction: float = 0.2
-    test_fraction: float = 0.0
+    splits: list[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])
     shuffle: bool = True
     random_seed: int = 42
 
@@ -62,12 +63,23 @@ class TabularCSVDataModule(DataModule):
 
         self._input_dim: Optional[int] = None
         self._output_dim: Optional[int] = None
+
         self.class_to_index: Optional[dict[str, int]] = None
+
+        self.num_rows: Optional[int] = None
+        self.column_dtypes: Optional[dict[str, str]] = None
+        self.split_indices: Optional[dict[str, list[int]]] = None
 
     def setup(self) -> None:
         df = pd.read_csv(self.config.path)
 
         self._validate_columns(df)
+
+        self.num_rows = len(df)
+        self.column_dtypes = {
+            column: str(dtype)
+            for column, dtype in df.dtypes.items()
+        }
 
         features = df[self.config.feature_columns].to_numpy(dtype=np.float32)
         raw_targets = df[self.config.target_column].to_numpy()
@@ -120,24 +132,46 @@ class TabularCSVDataModule(DataModule):
     def _split_dataset(self, dataset: Dataset) -> None:
         total_size = len(dataset)
 
-        test_size = int(total_size * self.config.test_fraction)
-        val_size = int(total_size * self.config.val_fraction)
-        train_size = total_size - val_size - test_size
+        train_fraction, val_fraction, test_fraction = self.config.splits
+
+        train_size = int(total_size * train_fraction)
+        val_size = int(total_size * val_fraction)
+        test_size = total_size - train_size - val_size
 
         if train_size <= 0:
-            raise ValueError("Train split is empty. Reduce val/test fractions.")
+            raise ValueError("Train split is empty. Adjust data.splits.")
+
+        if val_size < 0 or test_size < 0:
+            raise ValueError("Invalid split sizes. Check data.splits.")
 
         generator = torch.Generator().manual_seed(self.config.random_seed)
 
-        splits = random_split(
-            dataset,
-            [train_size, val_size, test_size],
+        permutation = torch.randperm(
+            total_size,
             generator=generator,
-        )
+        ).tolist()
 
-        self._train_dataset = splits[0]
-        self._val_dataset = splits[1] if val_size > 0 else None
-        self._test_dataset = splits[2] if test_size > 0 else None
+        train_indices = permutation[:train_size]
+        val_indices = permutation[train_size : train_size + val_size]
+        test_indices = permutation[train_size + val_size :]
+
+        self.split_indices = {
+            "train": train_indices,
+            "val": val_indices,
+            "test": test_indices,
+        }
+
+        self._train_dataset = Subset(dataset, train_indices)
+        self._val_dataset = (
+            torch.utils.data.Subset(dataset, val_indices)
+            if val_indices
+            else None
+        )
+        self._test_dataset = (
+            torch.utils.data.Subset(dataset, test_indices)
+            if test_indices
+            else None
+        )
 
     def train_dataloader(self):
         if self._train_dataset is None:
@@ -190,3 +224,51 @@ class TabularCSVDataModule(DataModule):
     @property
     def task_type(self) -> str:
         return self.config.task_type
+    
+    def artifact_metadata(self) -> dict:
+        if self.num_rows is None:
+            raise RuntimeError("Call setup() before requesting artifact metadata.")
+
+        return {
+            "data_type": self.config.type if hasattr(self.config, "type") else "tabular_csv",
+            "source_path": self.config.path,
+            "input_modality": self.input_modality,
+            "task_type": self.task_type,
+            "num_rows": self.num_rows,
+            "input_dim": self.input_dim,
+            "output_dim": self.output_dim,
+            "feature_columns": self.config.feature_columns,
+            "target_column": self.config.target_column,
+            "batch_size": self.config.batch_size,
+            "splits": self.config.splits,
+            "shuffle": self.config.shuffle,
+            "column_dtypes": self.column_dtypes,
+        }
+
+
+    def save_artifacts(self, run_context) -> list[str]:
+        if self.split_indices is None:
+            raise RuntimeError("Call setup() before saving data artifacts.")
+
+        saved_paths = []
+
+        data_schema_path = save_json(
+            path=run_context.path_for_artifact("data_schema.json"),
+            payload=self.artifact_metadata(),
+        )
+        saved_paths.append(str(data_schema_path))
+
+        split_indices_path = save_json(
+            path=run_context.path_for_artifact("split_indices.json"),
+            payload=self.split_indices,
+        )
+        saved_paths.append(str(split_indices_path))
+
+        if self.class_to_index is not None:
+            class_to_index_path = save_json(
+                path=run_context.path_for_artifact("class_to_index.json"),
+                payload=self.class_to_index,
+            )
+            saved_paths.append(str(class_to_index_path))
+
+        return saved_paths
