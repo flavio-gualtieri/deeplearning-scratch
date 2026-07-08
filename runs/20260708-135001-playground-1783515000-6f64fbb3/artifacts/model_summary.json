@@ -1,0 +1,27 @@
+{
+  "run_id": "20260708-135001-playground-1783515000-6f64fbb3",
+  "saved_at": "2026-07-08T12:50:05.152655+00:00",
+  "model_class": "Pipeline",
+  "model_module": "deepscratch.pipeline",
+  "input_modality": "tabular",
+  "task_type": "classification",
+  "encoder": {
+    "class_name": "TabularMLPEncoder",
+    "module": "deepscratch.encoders.mlp",
+    "embedding_dim": 16,
+    "input_modality": "tabular",
+    "num_parameters": 688,
+    "num_trainable_parameters": 688
+  },
+  "head": {
+    "class_name": "ClassificationHead",
+    "module": "deepscratch.heads.classification",
+    "input_dim": 16,
+    "output_dim": 3,
+    "task_type": "classification",
+    "num_parameters": 51,
+    "num_trainable_parameters": 51
+  },
+  "num_parameters": 739,
+  "num_trainable_parameters": 739
+}

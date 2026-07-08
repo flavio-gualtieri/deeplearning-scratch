@@ -21,19 +21,12 @@ data:
   shuffle: true
 components:
   encoder:
-    groups:
-      - feature_columns: [sepal_length, sepal_width]
-        encoder:
-          type: mlp
-          embedding_dim: 8
-          hidden_dims: [32]
-          dropout: 0.1
-      - feature_columns: [petal_length, petal_width]
-        encoder:
-          type: mlp
-          embedding_dim: 8
-          hidden_dims: [32]
-          dropout: 0.1
+    type: mlp
+    input_dim: 4
+    embedding_dim: 16
+    hidden_dims:
+    - 32
+    dropout: 0
   head:
     type: classification
     input_dim: 16

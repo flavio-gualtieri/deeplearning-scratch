@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>DeepScratch Playground</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<header id="palette">
+  <span class="palette-label">Components</span>
+  <div class="palette-scroll">
+    <div class="block palette-block" draggable="true" data-role="encoder" data-type="mlp">MLP Encoder</div>
+    <div class="block palette-block" draggable="true" data-role="encoder" data-type="categorical">Categorical Encoder</div>
+    <div class="block palette-block" draggable="true" data-role="encoder" data-type="cnn">Image CNN Encoder</div>
+    <div class="block palette-block" draggable="true" data-role="encoder" data-type="rnn">Sequence RNN Encoder</div>
+    <div class="block palette-block" draggable="true" data-role="encoder" data-type="transformer">Sequence Transformer Encoder</div>
+    <div class="block palette-block" draggable="true" data-role="head" data-type="classification">Classification Head</div>
+    <div class="block palette-block" draggable="true" data-role="head" data-type="regression">Regression Head</div>
+    <div class="block palette-block" draggable="true" data-role="head" data-type="multilabel">Multi-label Head</div>
+    <div class="block palette-block" draggable="true" data-role="head" data-type="projection">Projection Head</div>
+    <div class="block palette-block" draggable="true" data-role="head" data-type="sequence_tagging">Sequence Tagging Head</div>
+  </div>
+</header>
+
+<div id="main">
+  <aside id="left-panel">
+    <h3 id="csv-name">data/</h3>
+    <div class="legend-inline">
+      <span><i class="dot type-numeric"></i>numeric</span>
+      <span><i class="dot type-categorical"></i>categorical</span>
+    </div>
+    <div id="column-stack"></div>
+  </aside>
+
+  <section id="playground">
+    <div id="encoder-groups-wrapper">
+      <div id="encoder-groups"></div>
+      <button id="add-encoder-group" type="button" class="add-group-btn">+ Add Encoder Group</button>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="slot" id="head-slot" data-role="head">Drop Head Here</div>
+    <div class="arrow">&rarr;</div>
+    <div class="slot" id="target-slot" data-role="target">Drop Target Column Here</div>
+  </section>
+
+  <aside id="right-panel">
+    <h3>Training Loss</h3>
+    <canvas id="loss-chart" width="360" height="240"></canvas>
+    <div class="legend">
+      <span><i class="dot train"></i>train_loss</span>
+      <span><i class="dot val"></i>val_loss</span>
+    </div>
+    <div id="status-text">idle</div>
+  </aside>
+</div>
+
+<footer id="bottom-bar">
+  <label>Optimizer
+    <select id="optimizer">
+      <option value="adam">Adam</option>
+      <option value="sgd">SGD</option>
+    </select>
+  </label>
+
+  <label>Loss
+    <select id="loss_fn">
+      <option value="cross_entropy">Cross Entropy</option>
+      <option value="mse">MSE</option>
+      <option value="mae">MAE</option>
+      <option value="huber">Huber</option>
+      <option value="bce_with_logits">BCE with Logits</option>
+    </select>
+  </label>
+
+  <label class="split-label">Split (train / val / test)
+    <span class="split-inputs">
+      <input id="split-train" type="number" min="0" step="0.05" value="0.7" />
+      <input id="split-val" type="number" min="0" step="0.05" value="0.15" />
+      <input id="split-test" type="number" min="0" step="0.05" value="0.15" />
+    </span>
+  </label>
+
+  <label>Epochs <input id="epochs" type="number" min="1" value="50" /></label>
+  <label>Batch size <input id="batch_size" type="number" min="1" value="16" /></label>
+  <label>Learning rate <input id="learning_rate" type="number" min="0" step="0.0001" value="0.001" /></label>
+
+  <label>Device
+    <select id="device">
+      <option value="">auto</option>
+      <option value="cpu">cpu</option>
+      <option value="mps">mps</option>
+      <option value="cuda">cuda</option>
+    </select>
+  </label>
+
+  <button id="run-button">Run</button>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

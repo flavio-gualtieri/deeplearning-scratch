@@ -1,0 +1,30 @@
+{
+  "data_type": "tabular_csv",
+  "source_path": "data/iris.csv",
+  "input_modality": "tabular",
+  "task_type": "classification",
+  "num_rows": 150,
+  "input_dim": 4,
+  "output_dim": 3,
+  "feature_columns": [
+    "sepal_length",
+    "sepal_width",
+    "petal_length",
+    "petal_width"
+  ],
+  "target_column": "species",
+  "batch_size": 16,
+  "splits": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "shuffle": true,
+  "column_dtypes": {
+    "sepal_length": "float64",
+    "sepal_width": "float64",
+    "petal_length": "float64",
+    "petal_width": "float64",
+    "species": "str"
+  }
+}

@@ -1,0 +1,363 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{parskip}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!8},
+  columns=fullflexible,
+}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+
+\title{A Field Guide to the DeepScratch Playground UI\\
+\large For people who think in tensors, not pixels}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Why this document exists}
+
+You know exactly what an encoder, a head, a loss function, and a train/val/test
+split are. You have never had a reason to know what a ``DOM'' is or why a
+browser cares about something called an ``event listener.'' This guide exists
+so you can look at the playground, know something is wrong or something needs
+to change, and go directly to the right file and the right ten lines --
+without learning web development.
+
+The playground is small on purpose: two files you will actually edit, one
+file you will almost never touch, and one Python backend that is mostly
+plumbing you already understand (it reads a CSV, writes a YAML file, and
+calls \lstinline{subprocess.Popen} on \lstinline{entrypoint.py}).
+
+\section{The Mental Model}
+
+If you squint, the frontend is a training loop wearing a costume:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Training loop concept} & \textbf{Playground equivalent} \\
+\midrule
+Model weights (the state you mutate) & the \lstinline{state} object in \lstinline{app.js} \\
+Forward pass (state $\to$ output) & the \lstinline{render*()} functions (state $\to$ DOM) \\
+Optimizer step (an event changes state) & event listeners (\lstinline{change}, \lstinline{drop}, \lstinline{click}) \\
+Logging / metrics readout & \lstinline{drawChart()} on the canvas \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+There is no framework (no React, no Vue). Every screen update is: something
+happens $\to$ a small handler function mutates the \lstinline{state} object
+$\to$ a \lstinline{render*()} function throws away the old HTML for that
+section and rebuilds it from scratch. This is deliberately unsophisticated --
+closer to re-running a plotting cell than to a real UI framework's diffing
+engine -- and that is exactly what makes it easy to read top to bottom.
+
+\section{Where Everything Lives}
+
+\begin{center}
+\begin{tabular}{@{}p{0.32\textwidth}p{0.6\textwidth}@{}}
+\toprule
+\textbf{File} & \textbf{What it's responsible for} \\
+\midrule
+\lstinline{playground/server.py} &
+The backend. Stdlib-only Python (no Flask/FastAPI). Reads the CSV in
+\lstinline{data/}, turns whatever the browser sends into a valid
+\lstinline{config.yaml}, launches \lstinline{entrypoint.py} as a subprocess,
+and parses its stdout into loss points. \\
+\addlinespace
+\lstinline{playground/static/index.html} &
+The skeleton: every panel, slot, button, and input that exists, and nothing
+else. Think of it as declaring the layout only -- like defining
+\lstinline{nn.Module} submodules in \lstinline{__init__} before any
+\lstinline{forward} logic exists. \\
+\addlinespace
+\lstinline{playground/static/app.js} &
+All behavior. The \lstinline{state} object, every
+\lstinline{render*()} function, all drag-and-drop wiring, the Run button,
+polling, and the chart. \textbf{You will spend 90\% of your time in this
+file.} \\
+\addlinespace
+\lstinline{playground/static/style.css} &
+Pure appearance: colors, spacing, borders. Nothing in here changes what the
+app \emph{does}. Safe to ignore unless something looks visually wrong. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Start the whole thing with:
+\begin{lstlisting}
+python playground/server.py
+\end{lstlisting}
+It opens \lstinline{http://127.0.0.1:8765} in your browser automatically.
+
+\section{The State Object: Your Single Source of Truth}
+
+At the top of \lstinline{app.js} there is one object that fully describes
+everything you have configured. Nothing else needs to be inspected to know
+what the app currently thinks the pipeline is.
+
+\begin{lstlisting}
+const state = {
+  csv: { filename: "", columns: [] },   // from GET /api/csv
+  target: null,                         // e.g. "species"
+  excludedFeatures: new Set(),          // columns you unchecked
+  encoder: null,                        // { type, embedding_dim, hidden_dims, dropout }
+  head: null,                           // { type, hidden_dims, dropout }
+  training: {
+    optimizer, loss_fn, splits, epochs,
+    batch_size, learning_rate, device,
+  },
+};
+\end{lstlisting}
+
+Every control on screen either \emph{writes into} this object (an input's
+\lstinline{change} handler) or \emph{reads from} it (a
+\lstinline{render*()} function). If a number on screen is wrong, the bug is
+in exactly one of those two directions -- either the wrong handler is writing
+the wrong field, or the wrong field is being read when rendering.
+
+\section{Screen-by-Screen Tour}
+
+\subsection{Top Bar: Component Palette}
+Two draggable squares: \emph{MLP Encoder} and \emph{Classification Head}.
+These are the only two component types wired up on the Python side today
+(see Section~\ref{sec:new-component} to add a third). Each palette block
+carries two HTML \lstinline{data-*} attributes -- \lstinline{data-role}
+(\lstinline{encoder} or \lstinline{head}) and \lstinline{data-type}
+(\lstinline{mlp} or \lstinline{classification}) -- that get read in
+\lstinline{wirePalette()} and written into the drag payload.
+
+\subsection{Left Panel: CSV Columns and Feature Selection}
+On load, \lstinline{init()} calls \lstinline{GET /api/csv}, which the
+backend answers by looking at \lstinline{data/*.csv} (whichever CSV file it
+finds first) and returning its header row. \lstinline{renderColumnStack()}
+turns every column that isn't currently the target into a chip with:
+\begin{itemize}
+  \item a checkbox -- checked means ``use this column as a model input.''
+  Unchecking it adds the column name to \lstinline{state.excludedFeatures}
+  and greys out the chip (\lstinline{.excluded} CSS class) without removing
+  it, so you can toggle it back on;
+  \item a draggable label -- drag it onto the Target slot to make it the
+  prediction target instead.
+\end{itemize}
+The feature list actually sent to the backend is computed fresh in
+\lstinline{onRun()}: every CSV column, minus the target, minus anything in
+\lstinline{excludedFeatures}.
+
+\subsection{Center: The Playground Slots}
+Three fixed slots, left to right: Encoder $\to$ Head $\to$ Target. Each slot
+only accepts drops whose \lstinline{data-role} (or, for the target slot, drag
+``kind'') matches its own role -- dropping a Head onto the Encoder slot is a
+silent no-op with a one-line status message, not a crash.
+
+Once a slot is filled, its \lstinline{render*Slot()} function
+(\lstinline{renderEncoderSlot}, \lstinline{renderHeadSlot},
+\lstinline{renderTargetSlot}) replaces the placeholder text with the
+component's name, a $\times$ button to remove it, and -- for
+Encoder/Head -- plain number/text inputs bound directly to that component's
+hyperparameters. There is no ``settings panel'' or modal to open; the inputs
+are always visible once the slot is filled.
+
+\subsection{Right Panel: The Loss Chart}
+A bare \lstinline{<canvas>} element. \lstinline{drawChart()} clears it and
+redraws two polylines (train loss in blue, val loss in red) every time new
+points arrive from polling. There is no charting library -- it is manual
+pixel math (\lstinline{xScale}/\lstinline{yScale} map epoch/loss values to
+pixel coordinates). If you want gridlines, axis labels, or a legend beyond
+the two colored dots under the canvas, this is the function to extend.
+
+\subsection{Bottom Bar: Training Controls}
+Optimizer, loss function, train/val/test split, epochs, batch size, learning
+rate, device, and the Run button. Every input has a plain
+\lstinline{change} listener in \lstinline{wireBottomBar()} that writes
+straight into \lstinline{state.training}. The split fields are \emph{not}
+required to sum to 1 -- the backend normalizes them
+(\lstinline{split / sum(splits)}) before writing \lstinline{config.yaml}.
+
+\section{What Does the ``Hidden Dims'' Field Actually Accept?}
+\label{sec:hidden-dims}
+
+Both the Encoder and Head slots expose a plain text box for
+\lstinline{hidden_dims}, not a structured widget. It accepts a
+\textbf{comma-separated list of positive integers}, e.g.:
+
+\begin{lstlisting}
+32          ->  one hidden layer of width 32
+128, 64     ->  two hidden layers, widths 128 then 64
+(empty)     ->  no hidden layers at all (a single Linear layer)
+\end{lstlisting}
+
+The parsing happens in \lstinline{parseDims()} in \lstinline{app.js}: split
+on commas, trim whitespace, drop empty pieces, convert to numbers, then
+\textbf{silently discard anything that isn't a positive integer}. That last
+filter was added deliberately: without it, typing something like
+\lstinline{12,,7} or \lstinline{abc} would produce a \lstinline{NaN} in the
+array. \lstinline{JSON.stringify} turns \lstinline{NaN} into \lstinline{null}
+on the wire, which becomes \lstinline{None} in Python, which reaches
+\lstinline{ClassificationHead}/\lstinline{TabularMLPEncoder} as a hidden
+dimension and throws a \lstinline{TypeError} several stack frames away from
+the actual typo. Now a bad entry is just quietly dropped instead.
+
+Empty string $\to$ empty list \lstinline{[]} is intentional and safe: it
+degenerates to a single \lstinline{nn.Linear(input_dim, output_dim)}, which
+is exactly what \lstinline{ClassificationHead} and \lstinline{TabularMLPEncoder}
+do internally when \lstinline{hidden_dims} is empty.
+
+\section{What Happens When You Click Run}
+
+This is the one flow worth memorizing, because it is the entire bridge
+between the browser and your training code:
+
+\begin{enumerate}
+  \item \textbf{Validate (JS).} \lstinline{onRun()} checks an encoder, a
+  head, and a target are all set, and that at least one feature column
+  survives the checkboxes.
+  \item \textbf{Serialize (JS).} The relevant slice of \lstinline{state} is
+  packed into a plain JSON object and POSTed to \lstinline{/api/run}.
+  \item \textbf{Build the config (Python).} \lstinline{build_config()} in
+  \lstinline{server.py} fills in everything the UI doesn't expose
+  (checkpointing defaults, computed \lstinline{input_dim}/\lstinline{output_dim},
+  normalized splits) and returns a dict shaped exactly like
+  \lstinline{DeepScratchConfig}.
+  \item \textbf{Write YAML.} That dict is dumped straight over
+  \lstinline{config.yaml} at the repo root -- the same file
+  \lstinline{entrypoint.py} always reads.
+  \item \textbf{Launch training.}
+  \lstinline{subprocess.Popen(["python", "entrypoint.py"], cwd=REPO_ROOT)} --
+  literally the same command you'd type by hand.
+  \item \textbf{Stream stdout.} A background thread reads subprocess output
+  one line at a time. \lstinline{BasicTorchTrainer} already prints one line
+  per epoch (\lstinline{Epoch 3/50 - train_loss: 0.41}); a
+  regex (\lstinline{EPOCH_LINE}) turns each matching line into a
+  \lstinline|{epoch, train_loss, val_loss}| point. No changes to your
+  training code were needed for this to work.
+  \item \textbf{Poll.} The browser calls \lstinline{GET /api/status} every
+  600ms and redraws the chart with whatever new points showed up.
+\end{enumerate}
+
+\section{Web-Dev-to-Python Glossary}
+
+\begin{center}
+\begin{tabular}{@{}p{0.22\textwidth}p{0.7\textwidth}@{}}
+\toprule
+\textbf{Term} & \textbf{What it means to you} \\
+\midrule
+DOM & The live tree of on-screen elements. Think of it as the object graph a
+\lstinline{render*()} function builds and hands to the browser to paint. \\
+Event listener & A registered callback, same idea as a hook -- ``when X
+happens, call this function.'' \lstinline{addEventListener("change", fn)}
+is not conceptually different from registering a backward hook on a tensor. \\
+\lstinline{fetch} & Python's \lstinline{requests.get}/\lstinline{requests.post},
+just built into the browser. \\
+JSON payload & The dict you \lstinline{json.dumps()} and ship over HTTP --
+identical in spirit to any REST API body you've already sent from Python. \\
+Canvas & A blank pixel surface you draw on yourself with explicit coordinates,
+the rough web equivalent of calling \lstinline{plt.plot} but drawing every
+line segment manually. \\
+\lstinline{dataTransfer} & The small string payload attached to a drag
+gesture -- like passing a serialized argument into a callback that fires on
+drop. \\
+\lstinline{data-*} attribute & A free-form key/value tag on an HTML element,
+used here purely to stash metadata (which component type a palette block
+represents) for JS to read back later. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Cookbook: ``If You Want To \ldots''}
+
+\begin{itemize}
+  \item \textbf{Change a default hyperparameter value} (e.g. default
+  embedding dim) $\to$ edit the \lstinline{DEFAULTS} object at the top of
+  \lstinline{app.js}.
+  \item \textbf{Add an optimizer/loss option to the dropdown} $\to$ add an
+  \lstinline{<option>} in \lstinline{index.html}, \emph{and} make sure a
+  matching key exists in the \lstinline{OPTIMIZERS}/\lstinline{LOSS_FNS}
+  dict in \lstinline{entrypoint.py} -- the dropdown value is written verbatim
+  into \lstinline{config.yaml} and must resolve to something real.
+  \item \textbf{Change chart colors} $\to$ the hex strings passed into
+  \lstinline{drawLine(ctx, key, color, ...)} calls inside
+  \lstinline{drawChart()} in \lstinline{app.js} (and, for the legend dots
+  under the chart, the matching colors in \lstinline{style.css}).
+  \item \textbf{Change the polling rate} $\to$ the \lstinline{600} (ms)
+  literal in \lstinline{poll()} in \lstinline{app.js}.
+  \item \textbf{Change the server port} $\to$
+  \lstinline{python playground/server.py <port>}, or edit the default in
+  \lstinline{main()} in \lstinline{server.py}.
+  \item \textbf{Expose a currently-hidden config field in the UI} (e.g.
+  checkpointing options) $\to$ add a control to the bottom bar in
+  \lstinline{index.html}, wire it in \lstinline{wireBottomBar()}, add it to
+  \lstinline{state.training}, and read it in \lstinline{build_config()} in
+  \lstinline{server.py} instead of the hardcoded default.
+\end{itemize}
+
+\section{Adding a Brand-New Component Type End to End}
+\label{sec:new-component}
+
+Say you implement a \lstinline{RegressionHead} in
+\lstinline{deepscratch/heads/}. To make it appear in the playground:
+
+\begin{enumerate}
+  \item \textbf{Register it where training already knows about types.} Add a
+  branch to \lstinline{build_head()} in \lstinline{entrypoint.py} for
+  \lstinline{type == "regression"}. This step alone would already let you
+  hand-edit \lstinline{config.yaml} and run \lstinline{entrypoint.py}
+  directly -- the playground is just a front end onto this registry.
+  \item \textbf{Add a palette block.} In \lstinline{index.html}:
+  \begin{lstlisting}
+<div class="block palette-block" draggable="true"
+     data-role="head" data-type="regression">Regression Head</div>
+  \end{lstlisting}
+  \item \textbf{Give it defaults.} In \lstinline{app.js}, add an entry to
+  \lstinline{DEFAULTS}:
+  \begin{lstlisting}
+regression: { hidden_dims: "", dropout: 0 },
+  \end{lstlisting}
+  \item \textbf{Render its controls.} If it needs the same
+  hidden-dims/dropout inputs as \lstinline{ClassificationHead}, no extra
+  work is needed -- \lstinline{renderHeadSlot()} is generic. If it needs a
+  different input (e.g. no dropout), branch on \lstinline{state.head.type}
+  inside \lstinline{renderHeadSlot()}.
+  \item \textbf{Update} \lstinline{build_config()} \textbf{in
+  \lstinline{server.py}} if the new type needs different fields written into
+  \lstinline{components.head} (e.g. \lstinline{output_dim} should probably
+  become \lstinline{1} for regression instead of the class count).
+\end{enumerate}
+
+The pattern is the same for a new encoder, trainer, or data module -- the
+Python side (\lstinline{entrypoint.py}'s \lstinline{build_*} functions) is
+the source of truth for what \emph{exists}; the playground only needs to
+learn how to draw a box for it and what defaults to prefill.
+
+\section{Quick-Reference Table}
+
+\begin{center}
+\begin{tabular}{@{}p{0.3\textwidth}p{0.28\textwidth}p{0.32\textwidth}@{}}
+\toprule
+\textbf{On-screen control} & \textbf{HTML id} & \textbf{Lives in / driven by} \\
+\midrule
+Encoder slot & \lstinline{encoder-slot} & \lstinline{renderEncoderSlot()} \\
+Head slot & \lstinline{head-slot} & \lstinline{renderHeadSlot()} \\
+Target slot & \lstinline{target-slot} & \lstinline{renderTargetSlot()} \\
+Column stack & \lstinline{column-stack} & \lstinline{renderColumnStack()} \\
+Loss chart & \lstinline{loss-chart} & \lstinline{drawChart()} \\
+Status line & \lstinline{status-text} & \lstinline{setStatus()} \\
+Run button & \lstinline{run-button} & \lstinline{onRun()} \\
+Split inputs & \lstinline{split-train/val/test} & \lstinline{state.training.splits} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

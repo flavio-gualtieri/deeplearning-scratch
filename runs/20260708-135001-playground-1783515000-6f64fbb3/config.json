@@ -1,0 +1,66 @@
+{
+  "general": {
+    "input_path": "data/iris.csv",
+    "output_path": "runs",
+    "task_type": "classification"
+  },
+  "run": {
+    "name": "playground-1783515000",
+    "seed": 42
+  },
+  "data": {
+    "type": "tabular_csv",
+    "feature_columns": [
+      "sepal_length",
+      "sepal_width",
+      "petal_length",
+      "petal_width"
+    ],
+    "target_column": "species",
+    "batch_size": 16,
+    "splits": [
+      0.7,
+      0.15,
+      0.15
+    ],
+    "shuffle": true
+  },
+  "components": {
+    "encoder": {
+      "type": "mlp",
+      "input_dim": 4,
+      "embedding_dim": 16,
+      "hidden_dims": [
+        32
+      ],
+      "dropout": 0
+    },
+    "head": {
+      "type": "classification",
+      "input_dim": 16,
+      "output_dim": 3,
+      "hidden_dims": [],
+      "dropout": 0
+    },
+    "trainer": {
+      "type": "basic",
+      "epochs": 50,
+      "learning_rate": 0.001,
+      "loss_fn": "cross_entropy",
+      "optimizer": "adam",
+      "device": null,
+      "metrics_every": 1
+    }
+  },
+  "logging": {
+    "type": "jsonl",
+    "log_every": 1
+  },
+  "checkpointing": {
+    "enabled": true,
+    "save_every": 1,
+    "save_best": true,
+    "monitor": "val_loss",
+    "mode": "min"
+  }
+}

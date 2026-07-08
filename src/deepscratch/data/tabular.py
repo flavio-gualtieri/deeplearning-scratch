@@ -14,6 +14,31 @@ from .base import DataModule
 from ..runs.artifacts import save_json
 
 
+NUMERIC_DTYPES = {
+    "int8", "int16", "int32", "int64",
+    "uint8", "uint16", "uint32", "uint64",
+    "float16", "float32", "float64",
+}
+
+
+def infer_feature_type(dtype: str) -> str:
+    """
+    Map a pandas dtype string to a coarse semantic feature type.
+
+    Pandas reports free-text and categorical columns as "object" (pandas <3)
+    or "str"/"string" (pandas >=3 with string-dtype inference), so those cases
+    default to "categorical". Use ``TabularCSVConfig.feature_type_overrides``
+    to reclassify a specific column (e.g. as "text") when the default guess is wrong.
+    """
+    if dtype in NUMERIC_DTYPES:
+        return "numeric"
+
+    if dtype in {"object", "str", "string", "bool", "category"}:
+        return "categorical"
+
+    raise ValueError(f"Cannot infer feature type for dtype '{dtype}'.")
+
+
 @dataclass
 class TabularCSVConfig:
     path: str
@@ -26,6 +51,7 @@ class TabularCSVConfig:
     splits: list[float] = field(default_factory=lambda: [0.8, 0.1, 0.1])
     shuffle: bool = True
     random_seed: int = 42
+    feature_type_overrides: dict[str, str] = field(default_factory=dict)
 
 
 class TabularDataset(Dataset):
@@ -68,6 +94,8 @@ class TabularCSVDataModule(DataModule):
 
         self.num_rows: Optional[int] = None
         self.column_dtypes: Optional[dict[str, str]] = None
+        self.feature_types: Optional[dict[str, str]] = None
+        self.feature_cardinalities: Optional[dict[str, int]] = None
         self.split_indices: Optional[dict[str, list[int]]] = None
 
     def setup(self) -> None:
@@ -80,6 +108,24 @@ class TabularCSVDataModule(DataModule):
             column: str(dtype)
             for column, dtype in df.dtypes.items()
         }
+        self.feature_types = {
+            column: self.config.feature_type_overrides.get(
+                column, infer_feature_type(self.column_dtypes[column])
+            )
+            for column in self.config.feature_columns
+        }
+
+        self.feature_cardinalities = {}
+        for column in self.config.feature_columns:
+            if self.feature_types[column] != "categorical":
+                continue
+
+            categories = sorted(df[column].unique().tolist())
+            category_to_index = {
+                category: index for index, category in enumerate(categories)
+            }
+            df[column] = df[column].map(category_to_index)
+            self.feature_cardinalities[column] = len(categories)
 
         features = df[self.config.feature_columns].to_numpy(dtype=np.float32)
         raw_targets = df[self.config.target_column].to_numpy()
@@ -88,7 +134,10 @@ class TabularCSVDataModule(DataModule):
             targets = self._encode_classification_targets(raw_targets)
             self._output_dim = len(self.class_to_index or {})
         elif self.config.task_type == "regression":
-            targets = raw_targets.astype(np.float32)
+            # RegressionHead outputs [batch, 1]; without this reshape, torch's
+            # regression losses silently broadcast a [batch] target against it
+            # into a bogus [batch, batch] loss instead of raising a shape error.
+            targets = raw_targets.astype(np.float32).reshape(-1, 1)
             self._output_dim = 1
         else:
             raise ValueError(
@@ -243,6 +292,8 @@ class TabularCSVDataModule(DataModule):
             "splits": self.config.splits,
             "shuffle": self.config.shuffle,
             "column_dtypes": self.column_dtypes,
+            "feature_types": self.feature_types,
+            "feature_cardinalities": self.feature_cardinalities,
         }
 
 

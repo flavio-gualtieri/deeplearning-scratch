@@ -1,4 +1,4 @@
-# src/deepscratch/heads/classification.py
+# src/deepscratch/heads/regression.py
 
 from collections.abc import Sequence
 
@@ -8,34 +8,39 @@ import torch.nn as nn
 from deepscratch.heads.base import Head
 
 
-class ClassificationHead(Head):
+class RegressionHead(Head):
     """
-    Classification head with optional hidden layers.
+    Regression head with optional hidden layers.
+
+    Predicts one or more continuous targets from a pooled embedding. Use
+    ``output_dim=1`` (the default) for single-target regression (price,
+    risk score, a forecast value) or ``output_dim > 1`` for multi-target
+    regression (e.g. predicting several correlated measurements at once).
 
     Input shape:
         [batch_size, input_dim]
 
     Output shape:
-        [batch_size, num_classes]
+        [batch_size, output_dim]
     """
 
     def __init__(
         self,
         input_dim: int,
-        num_classes: int,
+        output_dim: int = 1,
         hidden_dims: Sequence[int] = (),
         dropout: float = 0.0,
     ):
         super().__init__(
             input_dim=input_dim,
-            output_dim=num_classes,
+            output_dim=output_dim,
         )
 
         if input_dim <= 0:
             raise ValueError("input_dim must be positive.")
 
-        if num_classes <= 1:
-            raise ValueError("num_classes must be greater than 1.")
+        if output_dim <= 0:
+            raise ValueError("output_dim must be positive.")
 
         if dropout < 0 or dropout >= 1:
             raise ValueError("dropout must be in the range [0, 1).")
@@ -44,11 +49,10 @@ class ClassificationHead(Head):
             if hidden_dim <= 0:
                 raise ValueError("All hidden dimensions must be positive.")
 
-        self.num_classes = num_classes
         self.hidden_dims = tuple(hidden_dims)
         self.dropout = dropout
 
-        dims = [input_dim, *hidden_dims, num_classes]
+        dims = [input_dim, *hidden_dims, output_dim]
         layers: list[nn.Module] = []
 
         for i in range(len(dims) - 1):
@@ -72,4 +76,4 @@ class ClassificationHead(Head):
 
     @property
     def task_type(self) -> str:
-        return "classification"
+        return "regression"

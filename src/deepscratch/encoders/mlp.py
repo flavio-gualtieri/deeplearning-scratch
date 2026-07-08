@@ -21,6 +21,8 @@ class TabularMLPEncoder(Encoder):
         [batch_size, embedding_dim]
     """
 
+    accepted_feature_types = {"numeric"}
+
     def __init__(
         self,
         input_dim: int,

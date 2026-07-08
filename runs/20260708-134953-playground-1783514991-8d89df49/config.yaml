@@ -3,7 +3,7 @@ general:
   output_path: runs
   task_type: classification
 run:
-  name: playground-1783515000
+  name: playground-1783514991
   seed: 42
 data:
   type: tabular_csv
@@ -21,24 +21,19 @@ data:
   shuffle: true
 components:
   encoder:
-    groups:
-      - feature_columns: [sepal_length, sepal_width]
-        encoder:
-          type: mlp
-          embedding_dim: 8
-          hidden_dims: [32]
-          dropout: 0.1
-      - feature_columns: [petal_length, petal_width]
-        encoder:
-          type: mlp
-          embedding_dim: 8
-          hidden_dims: [32]
-          dropout: 0.1
+    type: mlp
+    input_dim: 4
+    embedding_dim: 16
+    hidden_dims:
+    - 32
+    dropout: 0
   head:
     type: classification
     input_dim: 16
     output_dim: 3
-    hidden_dims: []
+    hidden_dims:
+    - null
+    - null
     dropout: 0
   trainer:
     type: basic
