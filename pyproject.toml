@@ -8,6 +8,7 @@ dependencies = [
     "pandas",
     "numpy",
     "scikit-learn",
+    "pyyaml",
 ]
 
 [tool.setuptools.packages.find]

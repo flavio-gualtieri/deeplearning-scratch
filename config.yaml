@@ -1,18 +1,18 @@
 general:
   input_path: data/iris.csv
   output_path: runs
-  task_type: classification
+  task_type: regression
 run:
-  name: playground-1783515000
+  name: playground-1784815757
   seed: 42
 data:
   type: tabular_csv
   feature_columns:
   - sepal_length
-  - sepal_width
   - petal_length
-  - petal_width
-  target_column: species
+  - sepal_width
+  - species
+  target_column: petal_width
   batch_size: 16
   splits:
   - 0.7
@@ -22,29 +22,34 @@ data:
 components:
   encoder:
     groups:
-      - feature_columns: [sepal_length, sepal_width]
-        encoder:
-          type: mlp
-          embedding_dim: 8
-          hidden_dims: [32]
-          dropout: 0.1
-      - feature_columns: [petal_length, petal_width]
-        encoder:
-          type: mlp
-          embedding_dim: 8
-          hidden_dims: [32]
-          dropout: 0.1
+    - feature_columns:
+      - sepal_length
+      - petal_length
+      - sepal_width
+      encoder:
+        type: mlp
+        embedding_dim: 16
+        dropout: 0
+        hidden_dims:
+        - 32
+    - feature_columns:
+      - species
+      encoder:
+        type: categorical
+        embedding_dim: 8
+        dropout: 0
   head:
-    type: classification
-    input_dim: 16
-    output_dim: 3
+    type: regression
+    input_dim: 24
+    output_dim: 1
     hidden_dims: []
     dropout: 0
+    normalize: true
   trainer:
     type: basic
     epochs: 50
     learning_rate: 0.001
-    loss_fn: cross_entropy
+    loss_fn: mse
     optimizer: adam
     device: null
     metrics_every: 1
